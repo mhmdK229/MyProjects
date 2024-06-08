@@ -1,0 +1,483 @@
+
+
+
+
+load the packages
+```{r }
+pacman::p_load(tidyverse,
+               data.table,
+               DT,
+               visdat,
+               lubridate,
+               purrr,
+               skimr,
+               scales,
+               DescTools,
+               here,
+               psych)
+```
+
+#read the data
+```{r}
+listings <- read_csv("C:/Users/muham/Downloads/listings_clean.csv")
+calendar <- read_csv("C:/Users/muham/Downloads/calendar_clean.csv")
+```
+
+#some preprocess 
+```{r}
+
+listings <- listings %>% 
+  mutate(host_is_superhost = if_else(host_is_superhost == "TRUE",1,0)) %>% 
+  mutate(across(where(is.character),~ ifelse(.x %in% c("","N/A"), NA_character_,.x)))
+```
+
+#Macro look
+```{r}
+# Listings macros
+glimpse(listings)
+vis_dat(listings)
+vis_miss(listings,cluster = T)
+listings %>% skim
+listings %>% Desc
+listings %>% select(where(is.numeric)) %>%  describe
+
+
+# Calendar macros
+glimpse(calendar)
+vis_dat(calendar, warn_large_data = F)
+vis_miss(calendar,  warn_large_data = F)
+```
+One variable Analysis
+#Host_since
+```{r}
+# host since
+listings <- listings %>% 
+  mutate(first_year_part = if_else(host_since - floor_date(host_since,unit = "years") <= max(host_since) - floor_date(max(host_since),unit = "years"),"yes","no"))
+
+ggplot(listings %>% filter(host_since >= "2009-01-01")) +
+  aes(x = factor(year(host_since)),fill = first_year_part)+
+  geom_bar()+
+  theme_classic()+
+  scale_y_continuous(expand = c(0,NA)) +
+  labs(title = "Number of new apartments each year",y = element_blank(), x= element_blank())+
+  scale_fill_manual(values = c("navyblue","dodgerblue"),breaks = c("yes","no"),name = "Dates existing \n in 2016 data")+
+  theme(legend.position = "bottom")
+
+```
+the final date in the data is 2016-09-06, so the data in navy blue shows the number of apatments joined before -09-06 each year, and in the blue is the number of apartments joined after -09-06 each year.
+###Number of apartments in the market
+```{r}
+dt_apart_num <- listings %>% 
+  arrange(host_since) %>% 
+  mutate(n_apartments = 1:nrow(listings)) %>% 
+  mutate(host_since = floor_date(host_since,unit = "months")) %>% 
+  group_by(host_since) %>% 
+  summarise(n_apartments = max(n_apartments))
+
+ggplot(dt_apart_num, aes(x = host_since, y = n_apartments))+
+  geom_line(color = "navyblue")+
+  theme_classic()+
+  theme(panel.grid.major.y = element_line(linewidth = 0.7,colour = "gray90"))+
+  scale_y_continuous(limits = c(0,3600),expand=c(0,NA),breaks = 500 * 0:7)+
+  scale_x_date(date_breaks = "1 year",
+                     date_labels = "%Y",
+                     limits = c(min(dt_apart_num$host_since),max(dt_apart_num$host_since)),
+                     expand = c(0,0))+
+  labs(title = "Number of apartments in the market",x= element_blank(),y = element_blank())
+
+```
+The graph shows the number of apartments in the market over time, displaying the cumulative number of apartments that entered the market up to a specific date. It also shows a moderation in the slope of the increase, indicating that the number of apartments that entered the market in 2016 is less than in other years. We will delve deeper into this matter of growth.
+
+#some data wrangling to have a deeper look
+```{r}
+
+# number of listings per neighborhood
+listings_per_year <- listings %>% 
+  mutate(join_year = year(host_since)) %>% 
+  count(join_year) %>% 
+  arrange(join_year)
+listings_per_year
+
+listings_per_month <- listings %>% 
+  mutate(join_month = month(host_since)) %>% 
+  count(join_month) %>% 
+  arrange(join_month)
+listings_per_month
+
+listings <- listings %>%
+  group_by(neighbourhood) %>% 
+  mutate(n_listings = n()) %>% 
+  mutate(neighbourhood_2 = if_else(n_listings < 50,"other",neighbourhood)) %>% 
+  ungroup()
+```
+
+###Number of beds
+```{r}
+ggplot(listings %>% na.omit(), aes(x = beds)) +
+  geom_boxplot(color = "navyblue") +
+  theme_classic() +
+  scale_x_continuous(breaks = 4 * 0:4)+
+  theme(axis.ticks.y = element_blank(), axis.text.y = element_blank())+
+  labs(title = "Distribution of the number of beds", x = element_blank())
+```
+
+
+
+
+###Average monthly number of reviews
+```{r}
+quantile_99 = quantile(listings$reviews_per_month,0.99,na.rm = T)
+fig_dat <- listings %>% 
+  mutate(reviews_per_month = if_else(reviews_per_month > quantile_99,quantile_99,reviews_per_month))
+
+ggplot(fig_dat %>% na.omit(),aes(x = (reviews_per_month)))+
+  geom_histogram(binwidth = 1,center = 0.5, fill = "navyblue")+
+  theme_classic()+
+  scale_y_continuous(expand = c(0,NA))+
+  scale_x_continuous(expand = c(0,NA),limits = c(0,10),breaks = 1:10)+
+  labs(y = element_blank(), x = element_blank(), title = "Distribution of average monthly number of reviews")
+  
+
+```
+The graph shows the distribution of the average number of ratings per month. Most apartments receive an average of one rating per month, and as the number of ratings increases, the number of apartments decreases. There are few apartments that receive an average of 9 ratings per month.
+
+#Prices
+```{r}
+fig_dat <- listings %>% 
+  mutate(if_else(price_dollars > quantile(price_dollars,0.99,na.rm=T),quantile(price_dollars,0.99,na.rm=T),price_dollars))
+ggplot(fig_dat , aes(x = price_dollars) ) +
+  geom_histogram(binwidth = 25, center = 12.5, fill = "navyblue") +
+  theme_classic()+
+  scale_y_continuous(expand = c(0,NA)) +
+  scale_x_continuous(expand = c(0,NA), limits = c(0,605), breaks = 25*0:24,
+                     labels = scales::dollar(25*0:24)) +
+  labs(y = element_blank(), x = element_blank(), title = "Distribution of prices")
+```
+The graph shows the distribution of prices, indicating a right-skewed distribution with most apartments being rented at prices between $50 to $200 per night. There are few apartments rented at prices above $350. It can be observed that apartment owners tend to price their apartments in multiples of $50.
+
+
+
+# ******************************************
+# TWO VARIABLE ANALYSIS
+# ******************************************
+
+###Location rating and price
+```{r}
+fig_dat <- listings %>%
+  group_by(neighbourhood_2) %>%
+  summarise(
+    num = n(),
+    price_dollars = mean(price_dollars, na.rm = TRUE),
+    review_scores_location = mean(review_scores_location, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(neighbourhood_2 = fct_reorder(neighbourhood_2, price_dollars)) %>%
+  na.omit()
+
+ggplot(fig_dat, aes(x = neighbourhood_2 , y = price_dollars , fill = review_scores_location))+
+  geom_bar(stat = "identity")+
+  theme_classic()+
+  scale_y_continuous(expand = c(0,NA),breaks = 50 * 0:4,labels = scales::dollar(50 * 0:4))+
+  coord_flip()+
+  scale_fill_gradient(low = "cyan", high = "navyblue",name = "Average location\nrating")+
+  labs(x = element_blank(),y = element_blank(),title = "It's all about the location",subtitle = "Average price and average location rating per neighbourhood")
+
+```
+The graph shows the average price and average rating by neighborhood, divided into two groups. Neighborhoods with a high location rating also have high prices, whereas neighborhoods with a low location rating have cheaper apartments. Within each group, the relationship between price and location rating is weak.
+
+###Number of new apartments per year and neighbourhood
+```{r}
+ggplot(listings %>% na.omit() %>% filter(host_since >= "2011-01-01"),  aes(x = year(host_since), fill = first_year_part)) +
+  facet_wrap(~ neighbourhood_2, scales = "free_x") +
+  geom_bar() +
+  theme_classic() +
+  scale_y_continuous(expand = c(0,NA))+
+  scale_x_continuous(limits = c(2010.5, 2016.5), breaks = 2011:2016, ) +
+  scale_fill_manual(values = c("navyblue", "dodgerblue"), breaks = c("yes","no"), name = "Dates existing \n in 2016 data" ) +
+  theme(strip.background = element_blank(),strip.text.x = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 315),legend.position = "right") +
+  labs(y = element_blank(), x = element_blank(), 
+       title = "Number of new apartments per year and neighborhood")
+```
+
+
+###Number of apartments per neighbourhood
+```{r}
+dt_apart_num_neigh <- listings %>% 
+  filter(!is.na(neighbourhood_2)) %>% 
+  group_by(neighbourhood_2) %>% 
+  arrange(neighbourhood_2,host_since) %>% 
+  mutate(n_apartments = 1:n(), host_since = floor_date(host_since, unit = "weeks")) %>% 
+  group_by(neighbourhood_2,host_since) %>% 
+  summarise(n_apartments = max(n_apartments))
+
+
+ggplot(dt_apart_num_neigh, aes(x = host_since, y = n_apartments)) +
+  geom_line(color = "navyblue") +
+  theme_classic() +
+  facet_wrap(~ neighbourhood_2,scales = "fixed") +
+  theme(strip.background = element_blank(), strip.text.x = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 315), panel.grid.major.y = element_line( size=0.75, color="gray90"))+
+  scale_x_date(date_breaks = "2 year", 
+               date_labels = "%Y",
+               limits = c(min(dt_apart_num$host_since), max(dt_apart_num$host_since)+2),
+               expand = c(0,0)) +
+  labs(title = "Number of apartments in each neighborhood",
+       subtitle = "Sep 2009 - Sep 2016",
+       x = element_blank(), y = element_blank())
+
+```
+The graph shows the number of apartments by neighborhood over time. It is observed that for most neighborhoods, the weakest year is 2016, which aligns with what we found in the analysis of the 'host_since' variable. For some neighborhoods, the moderation in the growth slope began with the transition from 2014 to 2015. It is noted that there is a significant variation not only in the size of the neighborhoods but also in when they grew.
+
+
+###Average number of beds in the apartment each year
+```{r}
+listings %>% 
+  mutate(year = year(host_since)) %>% 
+  group_by(year) %>% 
+  summarise(beds = mean(beds, na.rm = T)) %>% 
+  ggplot(aes(x = year, y = beds)) +
+  geom_bar(stat = "identity") +
+  theme_classic()+
+  scale_x_continuous(breaks = 2008:2016, labels = as.character(2008:2016))
+```
+
+###Reviews and Price
+```{r}
+# correlations among reviews 
+fig_dat <- listings %>% 
+  pivot_longer(cols = c(review_scores_accuracy, review_scores_checkin, review_scores_cleanliness, 
+                        review_scores_communication, review_scores_location, review_scores_value),
+               names_to = "var", values_to = "rating", names_prefix = "review_scores_") %>% 
+  group_by(var) %>% 
+  summarise(cor_rating = cor(rating, review_scores_rating, use = "complete.obs"),
+            cor_price = cor(price_dollars, rating, use = "complete.obs")) %>%
+  mutate(var = factor(str_to_title(if_else(var != "checkin", var, "checking")))) %>% 
+  mutate(var = fct_reorder(var, cor_rating)) %>% 
+  pivot_longer(cols = starts_with("cor"), names_to = "outcome", values_to = "cor" ) 
+
+
+
+ggplot(fig_dat, aes(x = var, y = cor, fill = outcome)) +
+  geom_bar(stat = "identity", position = position_dodge2(preserve = "single"))+ 
+  theme_classic() +
+  scale_y_continuous(expand = c(0,0), limits = c(-0.01,0.85)) +
+  geom_text(aes(label = round(cor, 2)),position = position_dodge(0.9),  vjust = -0.5) +
+  labs(x = element_blank(), y = "Correlation", title = "Correlation of ratings with price and with the overall rating") +
+  geom_hline(yintercept = 0, color = "gray60") +
+  scale_fill_manual(values = c("navyblue", "darkred"), name = "", labels = c("Correlation \n with price", "Correlation  with \n overall rating"))  
+
+
+```
+The graph displays the correlation between various ratings and both price and overall rating. The location rating shows the highest correlation with price, suggesting that location is the most crucial factor in apartment selection. Conversely, location has the lowest correlation with overall rating, indicating that people view location as a separate, valuable attribute not directly linked to the apartment's overall quality.
+
+# ******************************************
+# METRICS
+# ******************************************
+
+```{r}
+dt = merge(listings,calendar,by.x = "id",by.y = "listing_id")
+dt <- dt %>% 
+  mutate(month = floor_date(date,unit = "months"),
+         week = floor_date(date,unit = "weeks"),
+         year = year(date))
+
+library(dplyr)
+library(rlang)  # for dynamic data manipulation
+
+calc_per_change_rounded_city <- function(dt, rounding_per) {
+  # Convert rounding_per to symbol for dynamic grouping
+  rounding_per_sym <- sym(rounding_per)
+  
+  out <- dt %>%
+    # Summarize total_num_nights by year and dynamic group
+    group_by(year, !!rounding_per_sym) %>%
+    summarise(total_num_nights = sum(1 - available_category, na.rm = TRUE)) %>%
+    ungroup() %>%
+    arrange(year, !!rounding_per_sym) %>%
+    mutate(total_num_nights_prev = lag(total_num_nights)) %>%
+    mutate(per_change = ifelse(!is.na(total_num_nights_prev), 
+                               100 * (total_num_nights / total_num_nights_prev - 1), 
+                               NA_real_))
+  
+  
+  names(out)[names(out) == rounding_per] <- "name_rounding_per"
+  
+  return(out)
+}
+
+dt_rounded_month_city <- calc_per_change_rounded_city(dt, "month")
+dt_rounded_week_city <- calc_per_change_rounded_city(dt, "week")
+
+compute_tot_num_of_nights_in_window <- function(vec, window) {
+  vec <- map_dbl(window:length(vec), ~sum(vec[(.x-window+1):.x], na.rm = TRUE))
+  vec <- c(rep(NA, window - 1), vec)
+  return(vec)
+}
+
+calc_per_change_cont_city <- function(dt, window) {
+  out <- dt %>%
+    group_by(date) %>%
+    summarise(total_num_nights = sum(1 - available_category, na.rm = TRUE)) %>%
+    arrange(date) %>%
+    mutate(total_num_nights_win = compute_tot_num_of_nights_in_window(total_num_nights, window),
+           total_num_nights_win_shift = lag(total_num_nights_win, window),
+           per_change = ifelse(!is.na(total_num_nights_win_shift),
+                               100 * (total_num_nights_win / total_num_nights_win_shift - 1),
+                               NA_real_)) %>%
+    ungroup()
+
+  return(out)
+}
+
+dt_cont_city_30 <- calc_per_change_cont_city(dt, 30)
+dt_cont_city_7 <- calc_per_change_cont_city(dt, 7)
+ggplot(dt_cont_city_30 %>% na.omit(), aes(x = date, y = total_num_nights_win)) +
+  geom_line()
+ggplot(dt_cont_city_30 %>% na.omit(), aes(x = date, y = per_change)) +
+  geom_line()
+
+ggplot(dt_cont_city_7 %>% na.omit(), aes(x = date, y = per_change)) +
+  geom_line()
+```
+
+
+```{r}
+
+# change in number of apartments in the market
+
+dt_metrics_city <- listings %>% 
+  arrange(host_since) %>% 
+  mutate(n_apartments = 1:nrow(listings)) %>% 
+  group_by(host_since) %>% 
+  summarise(n_apartments = max(n_apartments)) %>%
+  mutate(year = year(host_since)) %>% 
+  group_by(year) %>% 
+  mutate(not_after_date = if_else(host_since <= ymd(paste0(year,"-09-06")), 1,0)) %>% 
+  filter(not_after_date == 1) %>% 
+  mutate(is_max_date = if_else(host_since == max(host_since), 1, 0)) %>% 
+  filter(is_max_date == 1)
+
+dt_metrics_city <- as.data.table(dt_metrics_city)
+dt_metrics_city[,n_apartments_shift := shift(n_apartments, 1),]
+
+dt_metrics_city <- dt_metrics_city %>% 
+  mutate(per_change = 100 * (n_apartments - n_apartments_shift) / n_apartments_shift,
+         tot_change = n_apartments - n_apartments_shift)
+
+ggplot(dt_metrics_city %>% na.omit(), aes(x = year, y = per_change) ) +
+  geom_point(color = "navyblue")+
+  geom_line(color = "navyblue") +
+  theme_classic() +
+  scale_x_continuous(breaks = 2010:2016, labels = 2010:2016) +
+  scale_y_continuous(limits = c(0,105),breaks = seq(10,100,10), labels = scales::percent(seq(0.1,1,0.1), accuracy = 1)) +
+  labs(title = "Yearly % growth in total number of apartments", subtitle = "Calculated at september 6th", x = element_blank(), y = element_blank()) +
+  geom_text(label = scales::percent(dt_metrics_city$per_change[2:8] / 100, accuracy = 0.1), nudge_y = 6)
+
+```
+
+```{r}
+ggplot(dt_metrics_city %>% na.omit(), aes(x = year, y = tot_change) ) +
+  geom_bar(stat = "identity", fill = "navyblue")+
+  theme_classic() +
+  scale_x_continuous(breaks = 2010:2016, labels = 2010:2016)  +
+  scale_y_continuous(limits = c(0,1060), expand = c(0,NA))+
+  labs(title = "Yearly growth in number of apartments", subtitle = "Calculated at september 6th", x = element_blank(), y = element_blank()) +
+  geom_text(label = dt_metrics_city$tot_change[2:8], nudge_y = 40)
+```
+The growth metric (by neighborhood) tracks the annual increase in new apartments entering the market, reflecting the market’s potential for full occupancy. However, a key issue is the lack of precise data on how many of these apartments are actually rented. Additionally, the data does not cover apartments that left the market before September 2016, nor does it reflect any that might have exited by then. If more detailed rental history were available, we could analyze changes in rented nights across different years, although focusing on a single year might only highlight seasonal effects, not true growth.
+
+```{r}
+dt_metrics_neigh <- listings %>% 
+  group_by(neighbourhood_2) %>% 
+  arrange(neighbourhood_2,host_since) %>% 
+  mutate(n_apartments = 1:n()) %>% 
+  group_by(neighbourhood_2,host_since) %>% 
+  summarise(n_apartments = max(n_apartments)) %>%
+  mutate(year = year(host_since)) %>% 
+  group_by(neighbourhood_2,year) %>% 
+  mutate(not_after_date = if_else(host_since <= ymd(paste0(year,"-09-06")), 1,0)) %>% 
+  filter(not_after_date == 1) %>% 
+  mutate(is_max_date = if_else(host_since == max(host_since), 1, 0)) %>% 
+  filter(is_max_date == 1 & !is.na(neighbourhood_2)) 
+
+dt_metrics_neigh <- as.data.table(dt_metrics_neigh)
+dt_metrics_neigh[,n_apartments_shift := shift(n_apartments, 1), by = neighbourhood_2]
+
+dt_metrics_neigh <- dt_metrics_neigh %>% 
+  mutate(per_change = 100 * (n_apartments - n_apartments_shift) / n_apartments_shift,
+         tot_change = n_apartments - n_apartments_shift)
+ggplot(dt_metrics_neigh , aes(x = year, y = tot_change) ) +
+  geom_bar(stat = "identity", fill = "navyblue")+
+  theme_classic() +
+  facet_wrap(~ neighbourhood_2, scales = "fixed") +
+  scale_x_continuous(breaks = 2010:2016, labels = 2010:2016)  +
+  scale_y_continuous(expand = c(0,NA), limits = c(0,120), breaks = 20 * 0:6)+
+  theme(strip.background = element_blank(), strip.text.x = element_text(face = "bold"),
+        axis.text.x = element_text(angle = 315),panel.grid.major.y = element_line( size=0.75, color="gray90")) +
+  labs(title = "Yearly growth in number of apartments per neighborhood", subtitle = "Calculated at september 6th", x = element_blank(), y = element_blank()) 
+```
+The number of apartments in the market has been increasing at a decreasing rate since the beginning of 2016. The number of new apartments in 2016 was lower than the numbers in 2014 and 2015. This can also be seen by the fact that for many neighborhoods, 2016 was a weak year, and for some neighborhoods, the slowdown began in 2014.
+
+```{r}
+
+ggplot(dt_metrics_neigh %>% na.omit() , aes(x = year, y = per_change) ) +
+  geom_point(color = "navyblue")+
+  geom_line(color = "navyblue") +
+  facet_wrap(~ neighbourhood_2, scales = "free_y") +
+  theme_classic() +
+  scale_x_continuous(breaks = 2010:2016, labels = 2010:2016) +
+  labs(title = "Yearly % growth in total number of apartments", subtitle = "Calculated at september 6th", x = element_blank(), y = element_blank()) 
+```
+
+# ******************************************
+# Extreme Values
+# ******************************************
+
+```{r}
+fig_dat <- calendar %>% 
+  filter(year(date) == 2017 & month(date) <= 6 & month(date) >= 3) %>% 
+  group_by(date) %>% 
+  summarise(price = mean(as.numeric(str_remove(price_dollars, "[$]")), na.rm = T), rented = sum(1 - available_category) / nrow(listings))
+
+ggplot(fig_dat, aes(x = date, y = price)) +
+  geom_line(color = "navyblue") +
+  theme_classic() +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y", expand = c(0,4)) +
+  theme(panel.grid.major.y = element_line( size=0.75, color="gray90")) +
+  labs(title = "Average price per date", x = element_blank(), y = element_blank()) +
+  geom_rect(xmin = ymd("2017-04-11"), xmax = ymd("2017-04-19"), ymin = 185, ymax = 220,
+            alpha = 0, color = "red", linetype = "dashed", size = 0.75) +
+  annotate(geom = "text", x = ymd("2017-04-05"), y = 215, 
+           label = "Easter \n week", size = 4.5,
+           fontface = "italic", hjust = 0.5,
+           lineheight = 0.85, color = "gray40")
+
+
+```
+The graph shows the average price over time. There is a sharp increase in the average price of apartments in mid-April, likely due to the Passover holiday. Therefore, the spike is logical and there is no issue with the data that needs correction.
+
+
+```{r}
+ggplot(listings %>% na.omit(), aes(x = beds)) +
+  geom_boxplot(color = "navyblue") +
+  theme_classic() +
+  scale_x_continuous(breaks = 4 * 0:4)+
+  theme(axis.ticks.y = element_blank(), axis.text.y = element_blank())+
+  labs(title = "Distribution of the number of beds", x = element_blank())
+  
+
+```
+The graph below shows an apartment with 16 beds. Upon investigating the observation, we found that the apartment is empty and has no beds (based on the apartment description). Since this observation significantly skews the distribution, we recommend removing it.
+
+
+```{r}
+ggplot(listings, aes(x = price_dollars)) +
+  geom_boxplot(color = "navyblue") +
+  theme_classic() +
+  scale_x_continuous(expand = c(0,NA), limits = c(0,4100), breaks = 500*0:8,
+                     labels = scales::dollar(500*0:8))+
+  theme(axis.ticks.y = element_blank(), axis.text.y = element_blank())+
+  labs(title = "Outliers in prices", x = element_blank())
+```
+As shown in the graph, there are two apartments rented at $3000 and $4000 per night, which is highly unusual for the price distribution. Upon investigating these apartments, it was discovered that they have a lot of missing information, and even when they were available, no price was listed. Therefore, it is reasonable to assume that this is a data entry error. When analyzing the price distribution, it would be prudent to adjust these values to, for example, the 99th percentile.
