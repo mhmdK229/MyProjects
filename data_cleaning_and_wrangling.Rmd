@@ -1,0 +1,75 @@
+---
+title: "data_wrangling"
+output: html_document
+date: "2024-07-04"
+---
+```{r}
+library(tidyverse)
+library(readxl)
+library(repurrrsive)
+```
+
+
+###Extracting and Formatting Star Wars Character Attributes with Custom Functions
+```{r}
+char_attrs <- c("name" = FALSE, "gender" = FALSE, "height" = FALSE, "mass" = FALSE, "species" = FALSE, "vehicles" = TRUE)
+
+chuck_safest <- function(element, attr, attrs_dict) {
+  res <- chuck_safely(element, attr)
+  if (attrs_dict[attr]) {
+    return(list(res))
+  }
+  return(res)
+}
+get_sw_element_details <- function(element, attrs_dict) {
+  attrs <- names(attrs_dict)
+  element_list <- map(attrs, function(attr) chuck_safest(element, attr, attrs_dict))
+  names(element_list) <- attrs
+  element_list
+}
+chuck_safely <- possibly(chuck, otherwise = NA_character_)
+chars <- sw_people %>% map_dfr(get_sw_element_details, char_attrs)
+chars
+```
+##Do the same for star wars films table
+```{r}
+attributes <- c("title" = FALSE, "episode_id" = FALSE, "director" = FALSE, "release_date" = FALSE, "characters" = TRUE, "planets" = TRUE, "starships" = TRUE, "vehicles" = TRUE)
+
+chuck_safest <- function(element, attr, attrs_dict) {
+  res <- chuck_safely(element, attr)
+  if (attrs_dict[attr]) {
+    return(list(res))
+  }
+  return(res)
+}
+get_sw_element_details <- function(element, attrs_dict) {
+  attrs <- names(attrs_dict)
+  element_list <- map(attrs, function(attr) chuck_safest(element, attr, attrs_dict))
+  names(element_list) <- attrs
+  element_list
+}
+
+chuck_safely <- possibly(chuck, otherwise = NA_character_)
+films <- sw_films %>% map_dfr(get_sw_element_details,attributes)
+films
+
+```
+
+###Data Cleaning and Wrangling for the messy Star Wars Character Details table
+```{r}
+
+details <-c("birth_year" = FALSE,"homeworld" = FALSE,"films" = TRUE)
+chars <- chars %>%
+  bind_cols(sw_people %>% map_dfr(get_sw_element_details,details)) %>% 
+  mutate(across(-c(vehicles,films) ,~na_if(.,"n/a"))) %>% 
+  mutate(across(-c(vehicles,films),~na_if(.,"unknown"))) %>% 
+  mutate(mass = gsub(",","",mass)) %>% 
+  mutate(across(c(height,mass),as.numeric)) %>% 
+  mutate(homeworld = as.integer(str_extract(homeworld,"(?<=/)[0-9]+(?=/)"))) %>% 
+  mutate(birth_year = as.numeric(str_extract(birth_year,"[0-9]+"))) %>% 
+  mutate(character_id = 1:nrow(chars)) %>% 
+  select(character_id,everything())
+
+```
+
+
